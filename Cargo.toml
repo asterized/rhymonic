@@ -1,0 +1,13 @@
+[package]
+name = "rhymonic"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+iced = { git = "https://github.com/iced-rs/iced", features = ["sipper", "debug"] }
+diesel = { version = "2.2", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
+directories = "6"
+lofty = "0.22"
+rodio = { version = "0.21" }
+walkdir = "2"
+souvlaki = "0.8.3"
