@@ -1,23 +1,45 @@
+use iced::futures::{StreamExt, channel::mpsc, select};
+use iced::task::{Never, Sipper, sipper};
 use rodio::Sink;
-use souvlaki::{MediaControlEvent, MediaControls, PlatformConfig};
-use iced::futures;
-use futures::{StreamExt, FutureExt, never::Never, select, channel::mpsc};
-use iced::task::{sipper, Sipper};
+use souvlaki::{
+    MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
+};
 
-use std::sync::{atomic::{AtomicUsize, Ordering}, Arc, RwLock};
+use crate::{MediaEvent, MediaSignal, Song};
+use std::{
+    fs::File,
+    sync::Arc,
+};
 
-use crate::{MediaEvent, MediaSignal};
+pub enum PlayError {
+    FileError,
+    DecodeError,
+}
 
-pub fn listen() -> impl Sipper<Never, MediaEvent> {
-    sipper(async |mut output| {
-        let stream_handle = rodio::OutputStreamBuilder::open_default_stream().expect("Could not open stream");
+pub enum TrackedEvent {
+    ControlEvent(MediaControlEvent),
+    NewSong,
+}
+
+pub struct Handler {
+    _stream_handle: rodio::OutputStream,
+    sink: Sink,
+    sender: sipper::Sender<MediaEvent>,
+    reciever: mpsc::Receiver<MediaSignal>,
+    controls: MediaControls,
+    event_listener: Arc<mpsc::UnboundedReceiver<TrackedEvent>>,
+    event_sender: Arc<mpsc::UnboundedSender<TrackedEvent>>,
+    currently_playing: Option<Arc<Song>>,
+}
+
+impl Handler {
+    pub async fn new(mut sender: sipper::Sender<MediaEvent>) -> Self {
+        let stream_handle =
+            rodio::OutputStreamBuilder::open_default_stream().expect("Could not open stream");
         let sink = Sink::connect_new(stream_handle.mixer());
 
-        let (sender, mut recv) = mpsc::channel(100);
-        output.send(MediaEvent::Play).await;
-        output.send(MediaEvent::Connect(sender)).await;
-
-        let mut prev = 0;
+        let (main_sender, recv) = mpsc::channel(100);
+        sender.send(MediaEvent::Connect(main_sender)).await;
 
         #[cfg(not(target_os = "windows"))]
         let hwnd = None;
@@ -37,80 +59,165 @@ pub fn listen() -> impl Sipper<Never, MediaEvent> {
         };
 
         let mut controls = MediaControls::new(config).unwrap();
-        let media_event: Arc<RwLock<Option<MediaControlEvent>>> = Arc::new(RwLock::new(None));
 
-        let media_event_clone = media_event.clone();
+        let (e_sender, e_listener) = mpsc::unbounded();
+        let event_sender = Arc::new(e_sender);
+        let event_listener = Arc::new(e_listener);
 
-        controls.attach(move |event| {
-            *media_event_clone.write().unwrap() = Some(event);
-        }).unwrap();
+        let control_sender = event_sender.clone();
+        controls
+            .attach(move |event| {
+                let _ = control_sender.unbounded_send(TrackedEvent::ControlEvent(event));
+            })
+            .unwrap();
 
-        let playing = Arc::new(AtomicUsize::new(0));
+        Self {
+            _stream_handle: stream_handle,
+            sink: sink,
+            sender: sender,
+            reciever: recv,
+            controls: controls,
+            event_listener: event_listener,
+            event_sender: event_sender,
+            currently_playing: None,
+        }
+    }
 
-        loop {
-            select! {
-                // detect when UI signals new song should be added to the queue
-                signal = recv.select_next_some() => {
-                    match signal {
-                        MediaSignal::AddSong(song) => {
-                            let file = std::fs::File::open(song.path).expect("test");
+    fn _add_song(&self, song: Arc<Song>) -> Result<(), PlayError> {
+        let opened = File::open(song.path.clone()).map_err(|_| PlayError::FileError)?;
 
-                            let playing_clone = playing.clone();
-                            sink.append(rodio::source::EmptyCallback::new(
-                                Box::new(move || {
-                                    playing_clone.fetch_add(1, Ordering::Relaxed);
-                                })
-                            ));
+        let decoder = rodio::Decoder::try_from(opened).map_err(|_| PlayError::DecodeError)?;
 
-                            sink.append(rodio::Decoder::try_from(file).expect("test"));
-                        },
-                        
-                        MediaSignal::PlaySong(song) => {
-                            let file = std::fs::File::open(song.path).expect("test");
+        self.sink.append(decoder);
 
-                            let playing_clone = playing.clone();
-                            sink.append(rodio::source::EmptyCallback::new(
-                                Box::new(move || {
-                                    playing_clone.fetch_add(1, Ordering::Relaxed);
-                                })
-                            ));
+        let sender_clone = self.event_sender.clone();
+        self.sink
+            .append(rodio::source::EmptyCallback::new(Box::new(move || {
+                let _ = sender_clone.unbounded_send(TrackedEvent::NewSong);
+            })));
 
-                            sink.append(rodio::Decoder::try_from(file).expect("test"));
-                        }
-                        _ => todo!()
-                    }
-                },
+        Ok(())
+    }
 
-                signal = async { media_event.read().unwrap().clone() }.fuse() => 'a: {
-                    if signal.is_none() {
-                        break 'a;
-                    }
+    async fn queue_song(&mut self, song: Arc<Song>) {
+        if self._add_song(song).is_ok() {
+            self.sender.send(MediaEvent::Queued).await;
+        } else {
+            self.sender.send(MediaEvent::FailedQueue).await;
+        }
+    }
 
-                    *media_event.write().unwrap() = None;
+    async fn handle_signals(&mut self, signal: MediaSignal) {
+        match signal {
+            MediaSignal::AddSong(song) => {
+                self.queue_song(song).await;
+                self.sink.play();
+            }
 
-                    match signal.unwrap() {
-                        MediaControlEvent::Pause => sink.pause(),
-                        MediaControlEvent::Play => sink.play(),
-                        MediaControlEvent::Toggle => {
-                            if sink.is_paused() {
-                                sink.play();
-                            }
-                            else {
-                                sink.pause();
-                            }
-                        },
-                        _ => {}
-                    };
-                },
+            MediaSignal::PlaySong(song) => {
+                self.sink.stop();
 
-                // detect when new song starts playing
-                new = async { playing.load(Ordering::Relaxed) }.fuse() => {
-                    if prev != new {
-                        output.send(MediaEvent::Playing(new)).await;
-                        prev = new;
-                    }
+                self.queue_song(song).await;
+                self.sink.play();
+            }
+
+            MediaSignal::PlayPause => {
+                if self.sink.is_paused() {
+                    self.sink.play();
+                } else {
+                    self.sink.pause()
                 }
             }
+
+            _ => todo!(),
+        };
+    }
+
+    fn handle_media_event(&self, signal: MediaControlEvent) {
+        match signal {
+            MediaControlEvent::Pause => self.sink.pause(),
+            MediaControlEvent::Play => self.sink.play(),
+            MediaControlEvent::Toggle => {
+                if self.sink.is_paused() {
+                    self.sink.play();
+                } else {
+                    self.sink.pause();
+                }
+            }
+            _ => {}
+        };
+    }
+
+    fn update_controls(&mut self) {
+        if self.sink.empty() {
+            let _ = self.controls.set_playback(MediaPlayback::Stopped);
+            return;
+        }
+
+        let Some(playing) = self.currently_playing.as_ref() else {
+            return;
+        };
+
+        let _ = self.controls.set_metadata(MediaMetadata {
+            title: Some(&playing.title),
+            album: Some(&playing.album),
+            artist: Some(
+                &playing
+                    .artists
+                    .iter()
+                    .map(|x| &*x.name)
+                    .collect::<Vec<&str>>()
+                    .join(", "),
+            ),
+            cover_url: None,
+            duration: Some(playing.length),
+        });
+
+        let progress = Some(MediaPosition(self.sink.get_pos()));
+        if self.sink.is_paused() {
+            let _ = self
+                .controls
+                .set_playback(MediaPlayback::Paused { progress: progress });
+        } else {
+            let _ = self
+                .controls
+                .set_playback(MediaPlayback::Playing { progress: progress });
+        }
+    }
+
+    pub async fn handle_event(&mut self) {
+        select! {
+            // detect when UI signals new song should be added to the queue
+            signal = self.reciever.select_next_some() => {
+                self.handle_signals(signal).await;
+            },
+
+            // safe as this is the only function where event_listener is used
+            signal = Arc::get_mut(&mut self.event_listener).unwrap().select_next_some() => {
+                match signal {
+                    TrackedEvent::ControlEvent(event) => {
+                        self.handle_media_event(event);
+                    }
+
+                    TrackedEvent::NewSong => {
+                        self.sender.send(MediaEvent::EndedSong).await;
+                    }
+                }
+            },
+        }
+
+        self.update_controls();
+    }
+}
+
+pub fn listen() -> impl Sipper<Never, MediaEvent> {
+    sipper(async move |mut output| {
+        output.send(MediaEvent::Play).await;
+
+        let mut state = Handler::new(output.clone()).await;
+
+        loop {
+            state.handle_event().await;
         }
     })
 }

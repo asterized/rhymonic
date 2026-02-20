@@ -1,55 +1,70 @@
 use directories::ProjectDirs;
+use iced::futures::channel::mpsc;
 use iced::{Subscription, Theme};
-use iced::futures::{channel::mpsc, FutureExt};
 
-use std::thread::available_parallelism;
 use std::path::Path;
+use std::sync::Arc;
+use std::thread::available_parallelism;
 
 use diesel::{Connection, SqliteConnection};
 
+pub mod ellipsize;
+mod listener;
 pub mod model;
 mod scan;
-mod schema;
 mod ui;
-mod listener;
+pub use model::Album;
 pub use model::Song;
 
+use crate::listener::listen;
 use crate::scan::scan_directory;
 
 pub fn main() -> iced::Result {
     iced::application(App::new, App::update, App::view)
-        .subscription(|_| Subscription::run(listener::listen).map(Message::Media))
+        .subscription(App::subscription)
+        .theme(App::theme)
         .run()
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Blueify(usize),
-    Play(Song),
-    Media(MediaEvent)
+    Queue(Arc<Song>),
+    Play(Arc<Song>),
+    Media(MediaEvent),
+    Send(MediaSignal),
 }
 
 #[derive(Debug, Clone)]
 pub enum MediaEvent {
-    Playing(usize),
     Connect(mpsc::Sender<MediaSignal>),
+    EndedSong,
+    FailedQueue,
+    Queued,
     Play,
-    Pause
+    Pause,
 }
 
+#[derive(Debug, Clone)]
 pub enum MediaSignal {
-    PlaySong(Song),
-    AddSong(Song),
-    Next
+    PlaySong(Arc<Song>),
+    AddSong(Arc<Song>),
+    PlayPause,
+    Next,
 }
 
 pub struct App {
     theme: Theme,
-    blue: usize,
     conn: Option<SqliteConnection>,
-    songs: Vec<Song>,
-    queue: Vec<usize>,
-    channel: Option<mpsc::Sender<MediaSignal>>
+    albums: Vec<Album>,
+
+    queue: Vec<Arc<Song>>,
+    queue_position: usize,
+
+    volume: f32,
+
+    channel: mpsc::Sender<MediaSignal>,
+    connected: bool,
+    playing: bool,
 }
 
 impl App {
@@ -59,26 +74,40 @@ impl App {
         let data = scan_directory(Path::new("/share/music/"), threads).unwrap();
 
         let application = Self {
-            theme: Theme::SolarizedDark,
-            blue: usize::MAX,
+            theme: Theme::Dark,
+
             conn: {
                 if location.is_some() {
                     let db_location = location.as_ref().unwrap().data_local_dir().join("songs.db");
-                    let conn = SqliteConnection::establish(&db_location.into_os_string().to_string_lossy());
+                    let conn = SqliteConnection::establish(
+                        &db_location.into_os_string().to_string_lossy(),
+                    );
                     conn.ok()
                 } else {
                     None
                 }
             },
-            songs: data,
+
+            albums: data,
+
             queue: Vec::new(),
-            channel: None
+            queue_position: 0,
+
+            volume: 50.0,
+
+            channel: mpsc::channel(0).0,
+            connected: false,
+            playing: false,
         };
 
         application
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::run(listener::listen).map(Message::Media)
+        Subscription::run(listen).map(Message::Media)
+    }
+
+    fn theme(&self) -> Theme {
+        self.theme.clone()
     }
 }

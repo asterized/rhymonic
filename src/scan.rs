@@ -1,10 +1,12 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::{io, thread};
 
-use crate::Song;
+use crate::{Album, Song};
 use walkdir::WalkDir;
 
-pub fn scan_directory(directory: &Path, threads: usize) -> io::Result<Vec<Song>> {
+pub fn scan_directory(directory: &Path, threads: usize) -> io::Result<Vec<Album>> {
     let mut files = Vec::new();
 
     for entry in WalkDir::new(directory).into_iter().filter_map(|e| e.ok()) {
@@ -17,7 +19,7 @@ pub fn scan_directory(directory: &Path, threads: usize) -> io::Result<Vec<Song>>
         chunk += 1;
     }
 
-    Ok(thread::scope(|s| {
+    let songs = thread::scope(|s| {
         let mut workers = Vec::with_capacity(threads);
         let files_chunked: Vec<&[PathBuf]> = files.chunks(chunk).collect();
 
@@ -29,8 +31,8 @@ pub fn scan_directory(directory: &Path, threads: usize) -> io::Result<Vec<Song>>
                 for path in chunk {
                     let song = Song::from_path(path);
 
-                    if song.is_ok() {
-                        data.push(song.unwrap());
+                    if let Ok(s) = song {
+                        data.push(Arc::new(s));
                     }
                 }
 
@@ -44,21 +46,24 @@ pub fn scan_directory(directory: &Path, threads: usize) -> io::Result<Vec<Song>>
         }
 
         output
-    }))
-}
+    });
 
-#[cfg(test)]
-mod test {
-    use std::path::Path;
+    let mut albums: HashMap<String, Vec<Arc<Song>>> = HashMap::with_capacity(songs.len());
+    for song in songs {
+        let album = {
+            if let Some(x) = albums.get_mut(&song.album) {
+                x
+            } else {
+                albums.insert(song.album.clone(), Vec::new());
+                albums.get_mut(&song.album).unwrap()
+            }
+        };
 
-    use super::scan_directory;
-
-    #[test]
-    fn test_scan() {
-        let data = scan_directory(Path::new("/share/music/"), 4).unwrap();
-
-        for item in data.iter().take(5) {
-            println!("{}, {}", item.title, item.path.display());
-        }
+        album.push(song);
     }
+
+    Ok(albums
+        .into_iter()
+        .map(|(name, items)| Album::from_vec(name, items))
+        .collect())
 }
