@@ -10,6 +10,7 @@ use std::io;
 pub struct Album {
     pub album_id: i32,
     pub name: String,
+    pub hash: Vec<u8>
 }
 
 #[derive(Debug, Clone, Queryable, Selectable, Identifiable)]
@@ -36,7 +37,7 @@ impl _Artist {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Artist {
     pub name: String,
     committed: bool,
@@ -94,6 +95,7 @@ pub struct DbSong {
     pub path: Vec<u8>,
     pub disc_number: i32,
     pub album_id: i32,
+    pub hash: Vec<u8>
 }
 
 #[derive(Debug, Clone, Queryable, Selectable, Identifiable)]
@@ -120,7 +122,7 @@ impl _Genre {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Genre {
     pub name: String,
     committed: bool,
@@ -166,9 +168,17 @@ impl From<&_Genre> for Genre {
     }
 }
 
+#[derive(Queryable, Selectable, Identifiable, Debug, Clone)]
+#[diesel(table_name = schema::playlists)]
+#[diesel(primary_key(playlist_id))]
+struct _Playlist {
+    playlist_id: i32,
+    name: String
+}
+
 #[derive(Identifiable, Selectable, Queryable, Associations, Debug)]
 #[diesel(belongs_to(DbSong, foreign_key=song_id))]
-#[diesel(belongs_to(Genre))]
+#[diesel(belongs_to(_Genre, foreign_key=genre_id))]
 #[diesel(table_name = schema::song_genre)]
 #[diesel(primary_key(song_id, genre_id))]
 pub struct SongGenre {
@@ -178,12 +188,32 @@ pub struct SongGenre {
 
 #[derive(Identifiable, Selectable, Queryable, Associations, Debug)]
 #[diesel(belongs_to(DbSong, foreign_key=song_id))]
-#[diesel(belongs_to(Artist))]
+#[diesel(belongs_to(_Artist, foreign_key=artist_id))]
 #[diesel(table_name = schema::song_artist)]
 #[diesel(primary_key(song_id, artist_id))]
 pub struct SongArtist {
     song_id: i32,
     artist_id: i32,
+}
+
+#[derive(Identifiable, Selectable, Queryable, Associations, Debug)]
+#[diesel(belongs_to(Album, foreign_key=album_id))]
+#[diesel(belongs_to(_Artist, foreign_key=artist_id))]
+#[diesel(table_name = schema::album_artist)]
+#[diesel(primary_key(album_id, artist_id))]
+pub struct AlbumArtist {
+    album_id: i32,
+    artist_id: i32,
+}
+
+#[derive(Identifiable, Selectable, Queryable, Associations, Debug)]
+#[diesel(belongs_to(DbSong, foreign_key=song_id))]
+#[diesel(belongs_to(_Playlist, foreign_key=playlist_id))]
+#[diesel(table_name = schema::playlist_song)]
+#[diesel(primary_key(playlist_id, song_id))]
+struct PlaylistSong {
+    playlist_id: i32,
+    song_id: i32
 }
 
 #[derive(Debug)]
@@ -192,3 +222,5 @@ pub enum Error {
     IOError(io::Error),
     InvalidData,
 }
+
+

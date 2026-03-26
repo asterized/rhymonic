@@ -26,7 +26,6 @@ diesel::table! {
     genres (genre_id) {
         genre_id -> Integer,
         name -> Text,
-        display_name -> Text,
     }
 }
 

@@ -2,9 +2,10 @@ use iced::widget::{Column, Row, button, column, container};
 use iced::{Element, Length};
 use iced_aw::ContextMenu;
 use std::time::Duration;
+use std::sync::Arc;
 
 use super::interface::SIZES;
-use crate::{App, Message, Song, ellipsize::ellipsized_text};
+use crate::{Message, Song, ellipsize::ellipsized_text};
 
 fn format_duration(duration: &Duration) -> String {
     if duration.as_secs() >= 3600 {
@@ -48,43 +49,40 @@ pub fn song_row(song: &Song) -> Row<'_, Message> {
     .height(50)
 }
 
-impl App {
-    pub fn display_queue(&self) -> Element<'_, Message> {
-        if self.queue.is_empty() {
-            return iced::widget::space().into();
-        }
-
-        Column::from_iter(
-            self.queue.iter().map(
-                |song| button(
-                    column![
-                        ellipsized_text(&song.title),
-                        ellipsized_text(song.artists.iter().map(|x| x.name.clone()).collect::<Vec<_>>().join(", "))
-                    ]
-                ).width(Length::Fill).into()
-            )
-        ).width(Length::FillPortion(2)).into()
+pub fn display_queue(queue: &Vec<Arc<Song>>) -> Element<'_, Message> {
+    if queue.is_empty() {
+        return iced::widget::space().into();
     }
 
-    pub fn map_songs(&self) -> Vec<Element<'_, Message>> {
-        self.albums
-            .iter()
-            .flat_map(|album| album.iter())
-            .map(|song| {
-                container(ContextMenu::new(
-                    button(song_row(song))
-                        .on_press(Message::Play(song.clone()))
-                        .style(|theme: &iced::Theme, status: button::Status| {
-                            let _palette = theme.extended_palette();
-                            button::Style {
-                                ..button::subtle(theme, status)
-                            }
-                        })
-                        .padding(0),
-                    || column![].into(),
-                ))
-                .into()
-            })
-            .collect()
-    }
+    Column::from_iter(
+        queue.iter().map(
+            |song| button(
+                column![
+                    ellipsized_text(&song.title),
+                    ellipsized_text(song.artists.iter().map(|x| x.name.clone()).collect::<Vec<_>>().join(", "))
+                ]
+            ).width(Length::Fill).into()
+        )
+    ).width(Length::FillPortion(2)).into()
+}
+
+pub fn map_songs(songs: &Vec<Arc<Song>>) -> Vec<Element<'_, Message>> {
+    songs
+        .iter()
+        .map(|song: &Arc<Song>| {
+            container(ContextMenu::new(
+                button(song_row(&song))
+                    .on_press(Message::Play(song.clone()))
+                    .style(|theme: &iced::Theme, status: button::Status| {
+                        let _palette = theme.extended_palette();
+                        button::Style {
+                            ..button::subtle(theme, status)
+                        }
+                    })
+                    .padding(0),
+                || column![].into(),
+            ))
+            .into()
+        })
+        .collect()
 }

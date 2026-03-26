@@ -1,69 +1,57 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-use std::{io, thread};
+use std::io;
 
+use crate::model::Artist;
 use crate::{Album, Song};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use walkdir::WalkDir;
 
-pub fn scan_directory(directory: &Path, threads: usize) -> io::Result<Vec<Album>> {
-    let mut files = Vec::new();
+pub fn scan_directory(directory: &Path) -> io::Result<Vec<Album>> {
+    let files: Vec<_> = WalkDir::new(directory)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .map(|song| song.path().to_path_buf())
+        .collect();
 
-    for entry in WalkDir::new(directory).into_iter().filter_map(|e| e.ok()) {
-        let path = entry.path();
-        files.push(path.to_path_buf());
-    }
-    let size = files.len();
-    let mut chunk = size / threads;
-    if size % threads > 0 {
-        chunk += 1;
-    }
-
-    let songs = thread::scope(|s| {
-        let mut workers = Vec::with_capacity(threads);
-        let files_chunked: Vec<&[PathBuf]> = files.chunks(chunk).collect();
-
-        for i in 0..threads {
-            let chunk = files_chunked[i];
-            workers.push(s.spawn(move || {
-                let mut data = Vec::new();
-
-                for path in chunk {
-                    let song = Song::from_path(path);
-
-                    if let Ok(s) = song {
-                        data.push(Arc::new(s));
-                    }
-                }
-
-                data
-            }));
-        }
-
-        let mut output = Vec::new();
-        for worker in workers {
-            output.extend(worker.join().unwrap());
-        }
-
-        output
-    });
-
-    let mut albums: HashMap<String, Vec<Arc<Song>>> = HashMap::with_capacity(songs.len());
-    for song in songs {
-        let album = {
-            if let Some(x) = albums.get_mut(&song.album) {
-                x
-            } else {
-                albums.insert(song.album.clone(), Vec::new());
-                albums.get_mut(&song.album).unwrap()
+    let albums = files
+        .into_par_iter()
+        .filter_map(|path| Song::from_path(&path).ok())
+        .map(Arc::new)
+        .fold(HashMap::new, |mut map: HashMap<(String, Vec<_>), Vec<Arc<Song>>>, song| {
+            map.entry(
+                (
+                    song.album.clone(),
+                    song.album_artists().unwrap_or(Vec::new()))
+                )
+                .or_default().push(song);
+            map
+        })
+        .reduce(HashMap::new, |mut a, b| {
+            for (k, mut v) in b {
+                a.entry(k).or_default().append(&mut v);
             }
-        };
 
-        album.push(song);
-    }
+            a
+        });
 
     Ok(albums
         .into_iter()
-        .map(|(name, items)| Album::from_vec(name, items))
+        .map(|(key, items)| {
+            let artists = {
+                if key.1.is_empty() {
+                    items.iter().fold(
+                        Vec::with_capacity(items.len()),
+                        |mut artists: Vec<_>, song| { artists.extend(song.artists.clone().into_iter()); artists }
+                    )
+                }
+                else {
+                    key.1.into_iter().map(|artist| Artist::from(artist)).collect()
+                }
+            };
+
+            Album::new(key.0, items, artists)
+        })
         .collect())
 }

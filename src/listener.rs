@@ -1,11 +1,13 @@
 use iced::futures::{StreamExt, channel::mpsc, select};
 use iced::task::{Never, Sipper, sipper};
-use rodio::Sink;
+use rodio::Player;
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
 };
 
 use crate::{MediaEvent, MediaSignal, Song};
+use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{
     fs::File,
     sync::Arc,
@@ -22,8 +24,8 @@ pub enum TrackedEvent {
 }
 
 pub struct Handler {
-    _stream_handle: rodio::OutputStream,
-    sink: Sink,
+    _stream_handle: rodio::MixerDeviceSink,
+    sink: Player,
     sender: sipper::Sender<MediaEvent>,
     reciever: mpsc::Receiver<MediaSignal>,
     controls: MediaControls,
@@ -34,9 +36,9 @@ pub struct Handler {
 
 impl Handler {
     pub async fn new(mut sender: sipper::Sender<MediaEvent>) -> Self {
-        let stream_handle =
-            rodio::OutputStreamBuilder::open_default_stream().expect("Could not open stream");
-        let sink = Sink::connect_new(stream_handle.mixer());
+        let mut stream_handle =
+            rodio::DeviceSinkBuilder::open_default_sink().expect("Could not open stream");
+        let sink = Player::connect_new(&stream_handle.mixer());
 
         let (main_sender, recv) = mpsc::channel(100);
         sender.send(MediaEvent::Connect(main_sender)).await;
@@ -70,6 +72,8 @@ impl Handler {
                 let _ = control_sender.unbounded_send(TrackedEvent::ControlEvent(event));
             })
             .unwrap();
+
+        stream_handle.log_on_drop(false);
 
         Self {
             _stream_handle: stream_handle,
@@ -127,6 +131,16 @@ impl Handler {
                 } else {
                     self.sink.pause()
                 }
+            }
+
+            MediaSignal::NewPosition(position) => {
+                if self.sink.try_seek(Duration::from_secs_f64(position)).is_err() {
+                    self.sender.send(MediaEvent::EndedSong).await;
+                }
+            }
+
+            MediaSignal::Sync => {
+                self.sender.send(MediaEvent::Sync(self.sink.get_pos())).await;
             }
 
             _ => todo!(),
@@ -187,7 +201,6 @@ impl Handler {
 
     pub async fn handle_event(&mut self) {
         select! {
-            // detect when UI signals new song should be added to the queue
             signal = self.reciever.select_next_some() => {
                 self.handle_signals(signal).await;
             },
@@ -204,7 +217,7 @@ impl Handler {
                     }
                 }
             },
-        }
+        };
 
         self.update_controls();
     }
