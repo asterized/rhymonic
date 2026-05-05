@@ -1,8 +1,13 @@
+mod components;
+mod ellipsize;
 mod helpers;
 mod interface;
+mod update;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Page {
     Songs,
-    Queue
+    Queue,
+    Albums,
+    Album(usize),
 }

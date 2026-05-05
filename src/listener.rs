@@ -1,17 +1,14 @@
 use iced::futures::{StreamExt, channel::mpsc, select};
 use iced::task::{Never, Sipper, sipper};
-use rodio::Player;
+use rodio::{Player, Source};
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
 };
 
 use crate::{MediaEvent, MediaSignal, Song};
-use std::time::Duration;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::{
-    fs::File,
-    sync::Arc,
-};
+use std::time::Duration;
+use std::{fs::File, sync::Arc};
 
 pub enum PlayError {
     FileError,
@@ -32,6 +29,7 @@ pub struct Handler {
     event_listener: Arc<mpsc::UnboundedReceiver<TrackedEvent>>,
     event_sender: Arc<mpsc::UnboundedSender<TrackedEvent>>,
     currently_playing: Option<Arc<Song>>,
+    duration: Arc<AtomicU64>,
 }
 
 impl Handler {
@@ -40,8 +38,12 @@ impl Handler {
             rodio::DeviceSinkBuilder::open_default_sink().expect("Could not open stream");
         let sink = Player::connect_new(&stream_handle.mixer());
 
+        let duration = Arc::new(AtomicU64::new(0));
+
         let (main_sender, recv) = mpsc::channel(100);
-        sender.send(MediaEvent::Connect(main_sender)).await;
+        sender
+            .send(MediaEvent::Connect((main_sender, duration.clone())))
+            .await;
 
         #[cfg(not(target_os = "windows"))]
         let hwnd = None;
@@ -84,13 +86,21 @@ impl Handler {
             event_listener: event_listener,
             event_sender: event_sender,
             currently_playing: None,
+            duration: duration,
         }
     }
 
     fn _add_song(&self, song: Arc<Song>) -> Result<(), PlayError> {
         let opened = File::open(song.path.clone()).map_err(|_| PlayError::FileError)?;
 
-        let decoder = rodio::Decoder::try_from(opened).map_err(|_| PlayError::DecodeError)?;
+        let duration = self.duration.clone();
+
+        let decoder = rodio::Decoder::try_from(opened)
+            .map_err(|_| PlayError::DecodeError)?
+            .track_position()
+            .periodic_access(Duration::from_millis(50), move |s| {
+                duration.store(s.get_pos().as_millis() as u64, Ordering::Relaxed);
+            });
 
         self.sink.append(decoder);
 
@@ -104,58 +114,59 @@ impl Handler {
     }
 
     async fn queue_song(&mut self, song: Arc<Song>) {
-        if self._add_song(song).is_ok() {
-            self.sender.send(MediaEvent::Queued).await;
-        } else {
+        if self._add_song(song).is_err() {
             self.sender.send(MediaEvent::FailedQueue).await;
         }
     }
 
+    async fn resume(&mut self) {
+        self.sink.play();
+        self.sender.send(MediaEvent::Play).await;
+    }
+
+    async fn pause(&mut self) {
+        self.sink.pause();
+        self.sender.send(MediaEvent::Pause).await;
+    }
+
     async fn handle_signals(&mut self, signal: MediaSignal) {
         match signal {
-            MediaSignal::AddSong(song) => {
-                self.queue_song(song).await;
-                self.sink.play();
-            }
-
             MediaSignal::PlaySong(song) => {
                 self.sink.stop();
 
                 self.queue_song(song).await;
-                self.sink.play();
+                self.resume().await;
             }
 
-            MediaSignal::PlayPause => {
-                if self.sink.is_paused() {
-                    self.sink.play();
-                } else {
-                    self.sink.pause()
-                }
+            MediaSignal::Pause => {
+                self.pause().await;
+            }
+
+            MediaSignal::Play => {
+                self.resume().await;
             }
 
             MediaSignal::NewPosition(position) => {
-                if self.sink.try_seek(Duration::from_secs_f64(position)).is_err() {
+                if self
+                    .sink
+                    .try_seek(Duration::from_secs_f64(position))
+                    .is_err()
+                {
                     self.sender.send(MediaEvent::EndedSong).await;
                 }
             }
-
-            MediaSignal::Sync => {
-                self.sender.send(MediaEvent::Sync(self.sink.get_pos())).await;
-            }
-
-            _ => todo!(),
         };
     }
 
-    fn handle_media_event(&self, signal: MediaControlEvent) {
+    async fn handle_media_event(&mut self, signal: MediaControlEvent) {
         match signal {
-            MediaControlEvent::Pause => self.sink.pause(),
-            MediaControlEvent::Play => self.sink.play(),
+            MediaControlEvent::Pause => self.pause().await,
+            MediaControlEvent::Play => self.resume().await,
             MediaControlEvent::Toggle => {
                 if self.sink.is_paused() {
-                    self.sink.play();
+                    self.resume().await;
                 } else {
-                    self.sink.pause();
+                    self.pause().await;
                 }
             }
             _ => {}
@@ -209,7 +220,7 @@ impl Handler {
             signal = Arc::get_mut(&mut self.event_listener).unwrap().select_next_some() => {
                 match signal {
                     TrackedEvent::ControlEvent(event) => {
-                        self.handle_media_event(event);
+                        self.handle_media_event(event).await;
                     }
 
                     TrackedEvent::NewSong => {
@@ -224,10 +235,8 @@ impl Handler {
 }
 
 pub fn listen() -> impl Sipper<Never, MediaEvent> {
-    sipper(async move |mut output| {
-        output.send(MediaEvent::Play).await;
-
-        let mut state = Handler::new(output.clone()).await;
+    sipper(async move |output| {
+        let mut state = Handler::new(output).await;
 
         loop {
             state.handle_event().await;
