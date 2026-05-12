@@ -1,7 +1,7 @@
 use iced::task::Task;
 use rfd::{AsyncFileDialog, FileHandle};
 use std::{collections::HashSet, hash::Hash, sync::Arc};
-use tokio::task::spawn_blocking;
+use iced_runtime::task::blocking;
 
 use crate::{
     App, MediaControl, MediaEvent, MediaSignal, Message, Song,
@@ -163,12 +163,10 @@ impl App {
 
                 let pool = self.pool.clone();
 
-                return Task::perform(
-                    spawn_blocking(move || scan_directory(handle.path(), pool)),
-                    |values| {
-                        Message::DoneImport(values.unwrap_or(Ok(Vec::new())).unwrap_or(Vec::new()))
-                    },
-                );
+                return blocking(move |mut sender| {
+                    let data = scan_directory(handle.path(), pool).unwrap_or(Vec::new());
+                    let _ = sender.try_send(data);
+                }).map(Message::DoneImport);
             }
 
             Message::DoneImport(albums) => {

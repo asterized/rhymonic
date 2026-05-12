@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-iced = { version = "0.14", features = ["sipper", "advanced", "image", "svg", "tokio"] }
+iced = { version = "0.14", features = ["sipper", "advanced", "image", "svg"] }
+iced_runtime = "0.14"
 iced_aw = "0.13"
 
 rfd = "0.17"
 sipper = "0.1"
-tokio = "1.52"
 
 diesel = { version = "2.2", features = ["sqlite", "returning_clauses_for_sqlite_3_35", "r2d2"] }
 diesel_migrations = "2.3"
