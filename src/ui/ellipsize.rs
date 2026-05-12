@@ -1,3 +1,7 @@
+// Copyright 2025 Héctor Ramón Jiménez
+// MIT License
+// Adapted from https://github.com/hecrj/iced_palace/releases/tag/0.14.0
+
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
 use iced::advanced::text::{self, Fragment, Hit, Paragraph};
