@@ -45,21 +45,10 @@ impl Handler {
             .send(MediaEvent::Connect((main_sender, duration.clone())))
             .await;
 
-        #[cfg(not(target_os = "windows"))]
-        let hwnd = None;
-
-        #[cfg(target_os = "windows")]
-        let hwnd = {
-            use raw_window_handle::windows::WindowsHandle;
-
-            let handle: WindowsHandle = unimplemented!();
-            Some(handle.hwnd)
-        };
-
         let config = PlatformConfig {
             dbus_name: "my_player",
             display_name: "My Player",
-            hwnd,
+            hwnd: None,
         };
 
         let mut controls = MediaControls::new(config).unwrap();

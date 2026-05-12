@@ -1,4 +1,4 @@
-use iced::task::Task;
+use iced::Task;
 use rfd::{AsyncFileDialog, FileHandle};
 use std::{collections::HashSet, hash::Hash, sync::Arc};
 use iced_runtime::task::blocking;
@@ -54,6 +54,7 @@ impl App {
                 self.queue_position += 1;
                 self.play_song(self.queue[self.queue_position].clone());
             }
+
             MediaControl::Prev => {
                 self.queue_position -= 1;
                 self.play_song(self.queue[self.queue_position].clone());
