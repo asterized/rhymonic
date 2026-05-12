@@ -1,6 +1,6 @@
 use iced::Task;
 use rfd::{AsyncFileDialog, FileHandle};
-use std::{collections::HashSet, hash::Hash, sync::Arc};
+use std::{collections::HashSet, hash::Hash, sync::Arc, time::Duration};
 use iced_runtime::task::blocking;
 
 use crate::{
@@ -22,6 +22,13 @@ fn identical<T: Eq + Hash>(
     }
 
     false
+}
+
+const TICK_TIME: Duration = Duration::from_millis(125);
+
+fn tick(mut sender: iced::futures::channel::mpsc::Sender<Message>) {
+    std::thread::sleep(TICK_TIME);
+    let _ = sender.try_send(Message::Tick);
 }
 
 impl App {
@@ -123,7 +130,7 @@ impl App {
             Message::Control(control) => self.handle_control(control),
 
             Message::SetPosition(position) => {
-                let _ = self.channel.try_send(MediaSignal::NewPosition(position));
+                let _ = self.channel.try_send(MediaSignal::NewPosition(position as u64));
             }
 
             Message::Queue(song) => self.queue.push(song.clone()),
@@ -144,13 +151,15 @@ impl App {
             Message::BeginImportSong => {
                 let dialog = AsyncFileDialog::new();
 
-                return Task::perform(dialog.pick_file(), |handle| Message::ImportSong(handle));
+                return Task::perform(dialog.pick_file(), |handle| Message::ImportSong(handle)).chain(
+                    blocking(tick)
+                );
             }
 
             Message::BeginImportDir => {
                 let dialog = AsyncFileDialog::new();
 
-                return Task::perform(dialog.pick_folder(), Message::ImportDirectory);
+                return Task::perform(dialog.pick_folder(), Message::ImportDirectory).chain(blocking(tick));
             }
 
             Message::ImportSong(h) => {
@@ -167,7 +176,8 @@ impl App {
                 return blocking(move |mut sender| {
                     let data = scan_directory(handle.path(), pool).unwrap_or(Vec::new());
                     let _ = sender.try_send(data);
-                }).map(Message::DoneImport);
+                }).map(Message::DoneImport)
+                .chain(blocking(tick));
             }
 
             Message::DoneImport(albums) => {
@@ -178,8 +188,10 @@ impl App {
 
                 self.albums.extend(albums);
             }
+
+            Message::Tick => {}
         };
 
-        Task::none()
+        blocking(tick)
     }
 }

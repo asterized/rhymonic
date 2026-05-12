@@ -31,6 +31,7 @@ pub fn main() -> iced::Result {
         .run()
 }
 
+
 #[derive(Debug, Clone)]
 pub enum MediaControl {
     Next,
@@ -55,6 +56,8 @@ pub enum Message {
     ImportSong(Option<FileHandle>),
     ImportDirectory(Option<FileHandle>),
     DoneImport(Vec<Album>),
+
+    Tick
 }
 
 #[derive(Debug, Clone)]
@@ -69,7 +72,7 @@ pub enum MediaEvent {
 #[derive(Debug, Clone)]
 pub enum MediaSignal {
     PlaySong(Arc<Song>),
-    NewPosition(f64),
+    NewPosition(u64),
     Pause,
     Play,
 }

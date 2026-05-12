@@ -138,7 +138,7 @@ impl Handler {
             MediaSignal::NewPosition(position) => {
                 if self
                     .sink
-                    .try_seek(Duration::from_secs_f64(position))
+                    .try_seek(Duration::from_millis(position))
                     .is_err()
                 {
                     self.sender.send(MediaEvent::EndedSong).await;
