@@ -431,7 +431,13 @@ impl Song {
     }
 
     fn get_image(tag: &Tag) -> Option<Vec<u8>> {
-        for image_type in [PictureType::CoverFront, PictureType::Icon, PictureType::Media, PictureType::Illustration, PictureType::Other] {
+        for image_type in [
+            PictureType::CoverFront,
+            PictureType::Icon,
+            PictureType::Media,
+            PictureType::Illustration,
+            PictureType::Other,
+        ] {
             if let Some(image) = Self::_get_image(tag, image_type) {
                 return Some(image);
             }

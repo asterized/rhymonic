@@ -4,7 +4,7 @@ use iced::widget::{column, container, row};
 use iced::{Border, Element, Length};
 
 use crate::ui::Page;
-use crate::ui::components::{album_display, control_bar, display_songs, sidebar};
+use crate::ui::components::{album_display, album_heading, control_bar, display_songs, sidebar};
 use crate::{App, Message};
 
 impl App {
@@ -12,11 +12,15 @@ impl App {
         let data = match self.page {
             Page::Songs => display_songs(&self.songs, self.scroll_position, self.connected),
             Page::Queue => display_songs(&self.queue, self.scroll_position, self.connected),
-            Page::Album(index) => display_songs(
-                &self.albums[index].songs,
-                self.scroll_position,
-                self.connected,
-            ),
+            Page::Album(index) => column![
+                album_heading(&self.albums[index]),
+                display_songs(
+                    &self.albums[index].songs,
+                    self.scroll_position,
+                    self.connected,
+                )
+            ]
+            .into(),
             Page::Albums => album_display(self.albums.iter()),
         };
 
@@ -31,7 +35,6 @@ impl App {
                 sidebar(&self.page)
                     .width(Length::FillPortion(1))
                     .height(Length::Fill),
-
                 container(data)
                     .style(|theme| container::Style {
                         border: Border {
@@ -44,7 +47,6 @@ impl App {
                     .width(Length::FillPortion(6))
                     .height(Length::Fill)
             ],
-
             control_bar(
                 self.playing,
                 duration as f64,

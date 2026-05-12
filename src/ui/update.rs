@@ -4,7 +4,9 @@ use std::{collections::HashSet, hash::Hash, sync::Arc};
 use tokio::task::spawn_blocking;
 
 use crate::{
-    App, MediaControl, MediaEvent, MediaSignal, Message, Song, model::{DbAlbum, UncommittedSong}, scan::scan_directory
+    App, MediaControl, MediaEvent, MediaSignal, Message, Song,
+    model::{DbAlbum, UncommittedSong},
+    scan::scan_directory,
 };
 
 fn identical<T: Eq + Hash>(
@@ -162,12 +164,10 @@ impl App {
                 let pool = self.pool.clone();
 
                 return Task::perform(
-                    spawn_blocking(move || {
-                        scan_directory(handle.path(), pool)
-                    }),
+                    spawn_blocking(move || scan_directory(handle.path(), pool)),
                     |values| {
                         Message::DoneImport(values.unwrap_or(Ok(Vec::new())).unwrap_or(Vec::new()))
-                    }
+                    },
                 );
             }
 

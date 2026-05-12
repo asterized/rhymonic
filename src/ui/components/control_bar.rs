@@ -35,13 +35,7 @@ load_icon!(play);
 
 pub fn control_bar<'a>(playing: bool, duration: f64, position: f64) -> Column<'a, Message> {
     column![
-        slider(
-            0f64..=(duration as f64),
-            position,
-            Message::SetPosition
-        )
-        .width(Length::Fill),
-
+        slider(0f64..=(duration as f64), position, Message::SetPosition).width(Length::Fill),
         row![
             space().width(Length::FillPortion(1)),
             button(svg(step_backward.clone()))
@@ -62,11 +56,11 @@ pub fn control_bar<'a>(playing: bool, duration: f64, position: f64) -> Column<'a
             .height(50.0)
             .width(50.0),
             button(svg(step_forward.clone()))
-            .on_press(Message::Control(MediaControl::Next))
-            .style(control_button)
-            .padding(Padding::from([15, 0]))
-            .height(50.0)
-            .width(50.0),
+                .on_press(Message::Control(MediaControl::Next))
+                .style(control_button)
+                .padding(Padding::from([15, 0]))
+                .height(50.0)
+                .width(50.0),
             space().width(Length::FillPortion(1))
         ]
         .spacing(20.0)

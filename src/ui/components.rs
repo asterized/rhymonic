@@ -1,9 +1,11 @@
 mod album_display;
+mod album_heading;
 mod control_bar;
 mod sidebar;
 mod song_display;
 
 pub use album_display::album_display;
+pub use album_heading::album_heading;
 pub use control_bar::control_bar;
 pub use sidebar::sidebar;
 pub use song_display::display_songs;

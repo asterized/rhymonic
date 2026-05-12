@@ -66,15 +66,12 @@ pub fn display_song(song: &Arc<Song>) -> Element<'_, Message> {
                     base.border = iced::border::width(0);
 
                     base
-                })
+                }),
         )
         .height(ROW_HEIGHT),
-
-        || column![
-            button("Add to queue").on_press(Message::Queue(song.clone()))
-        ].into()
+        || column![button("Add to queue").on_press(Message::Queue(song.clone()))].into(),
     )
-        .into()
+    .into()
 }
 
 pub fn display_songs(

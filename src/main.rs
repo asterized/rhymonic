@@ -1,6 +1,5 @@
-use diesel::SqliteConnection;
-use diesel::connection::SimpleConnection;
 use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool};
+use diesel::{RunQueryDsl, SqliteConnection};
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 
 use iced::futures::channel::mpsc;
@@ -10,7 +9,7 @@ use directories::ProjectDirs;
 
 use rfd::FileHandle;
 
-use std::fs::create_dir;
+use std::fs::create_dir_all;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -91,10 +90,7 @@ pub struct App {
     playing: bool,
 
     page: Page,
-    scroll_position: f32,
-
-    shuffled: bool,
-    looped: bool,
+    scroll_position: f32
 }
 
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
@@ -104,9 +100,13 @@ struct EnableWal {}
 
 impl CustomizeConnection<SqliteConnection, diesel::r2d2::Error> for EnableWal {
     fn on_acquire(&self, conn: &mut SqliteConnection) -> Result<(), diesel::r2d2::Error> {
-        conn.batch_execute("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-        conn.batch_execute("PRAGMA wal_checkpoint(TRUNCATE);")?;
-        conn.run_pending_migrations(MIGRATIONS).unwrap();
+        diesel::sql_query("PRAGMA foreign_keys = ON;").execute(conn)?;
+
+        diesel::sql_query("PRAGMA busy_timeout = 5000;").execute(conn)?;
+
+        diesel::sql_query("PRAGMA journal_mode = WAL;").execute(conn)?;
+
+        diesel::sql_query("PRAGMA synchronous = NORMAL;").execute(conn)?;
 
         Ok(())
     }
@@ -120,9 +120,13 @@ fn establish_connection(
     let manager = ConnectionManager::<SqliteConnection>::new(location);
 
     let pool = Pool::builder()
-        .test_on_check_out(true)
         .connection_customizer(Box::new(EnableWal {}))
         .build(manager)?;
+
+    pool.get()
+        .expect("Could not create connection to database")
+        .run_pending_migrations(MIGRATIONS)
+        .expect("Could not run migrations");
 
     Ok(pool)
 }
@@ -132,10 +136,6 @@ fn establish_in_memory_database() -> ConnectionPool {
 }
 
 fn establish_connection_with_fallback(location: &Path) -> ConnectionPool {
-    if !location.exists() {
-        create_dir(location).unwrap();
-    }
-
     establish_connection(location.to_str().unwrap()).unwrap_or(establish_in_memory_database())
 }
 
@@ -143,15 +143,24 @@ const FOLLOWING_SIZE: usize = 50;
 
 impl App {
     fn new() -> Self {
-        let _location = ProjectDirs::from("io.github", "asterized", "rhythmic");
+        let location = ProjectDirs::from("io.github", "asterized", "rhymonic");
 
-        /*let mut pool = if let Some(dirs) = location.as_ref() {
+        let mut pool = if let Some(dirs) = location.as_ref() {
             let data_dir = dirs.data_local_dir();
-            establish_connection_with_fallback(&data_dir.join("songs.db"))
+            let location = data_dir.join("songs.db");
+
+            if !matches!(
+                create_dir_all(data_dir).map_err(|x| x.kind()),
+                Ok(()) | Err(std::io::ErrorKind::AlreadyExists)
+            ) {
+                establish_in_memory_database()
+            } else {
+                let _ = std::fs::File::create_new(&location);
+                establish_connection_with_fallback(&location)
+            }
         } else {
             establish_in_memory_database()
-        };*/
-        let mut pool = establish_in_memory_database();
+        };
 
         let data = Album::load(&mut pool).unwrap();
 
@@ -182,24 +191,15 @@ impl App {
 
             page: Page::Songs,
             scroll_position: 0f32,
-
-            shuffled: false,
-            looped: false,
         };
 
         application
     }
 
     fn fill_queue(&mut self) -> Option<()> {
-        println!("a");
-        for _ in 0..(self.queue.len() + self.queue_position).saturating_sub(FOLLOWING_SIZE) {
-            println!("b");
+        for _ in 0..FOLLOWING_SIZE.saturating_sub(self.queue.len() - self.queue_position) {
             let position = self.songs.binary_search(self.queue.last()?).ok()?;
-            self.queue.push(
-                self.songs
-                    .get(position + 1)?
-                    .clone(),
-            );
+            self.queue.push(self.songs.get(position + 1)?.clone());
         }
 
         Some(())
