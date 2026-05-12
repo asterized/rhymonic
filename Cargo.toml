@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-iced = { version = "0.14", features = ["sipper", "debug", "advanced", "image", "svg", "tokio"] }
-image = { version = "0.25", default-features = false }
+iced = { version = "0.14", features = ["sipper", "advanced", "image", "svg", "tokio"] }
 iced_aw = "0.13"
 
 rfd = "0.17"
